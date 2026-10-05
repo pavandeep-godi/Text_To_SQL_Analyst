@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from data_generator import generate_procurement, generate_sales
-from insights_agent import _validate_with_ai, analyze, classify_question, format_money
+from insights_agent import _llm_classify, _normalize_classification, _validate_with_ai, analyze, classify_question, format_money
 
 
 class DataGenerationTests(unittest.TestCase):
@@ -23,6 +23,86 @@ class DataGenerationTests(unittest.TestCase):
 
 
 class AgentTests(unittest.TestCase):
+    def test_normalizes_llm_string_years_and_common_intent_aliases(self) -> None:
+        self.assertEqual(
+            ("sales_trend", 2025, "Show the monthly sales trend for 2025."),
+            _normalize_classification(
+                {"intent": "sales_trend", "year": "2025", "interpreted_question": "Show the monthly sales trend for 2025."},
+                "sales 2025 month trend",
+            ),
+        )
+        self.assertEqual(
+            ("regional_sales", 2025, "Which region had the highest sales in 2025?"),
+            _normalize_classification(
+                {"intent": "sales-by-region", "year": 2025, "interpreted_question": "Which region had the highest sales in 2025?"},
+                "which place sold most last year?",
+            ),
+        )
+        self.assertEqual(
+            ("delivery_performance", None, "Which suppliers have the best delivery?"),
+            _normalize_classification(
+                {"intent": "supplier_delivery", "year": "all years", "interpreted_question": "Which suppliers have the best delivery?"},
+                "vendors delivery best",
+            ),
+        )
+
+    def test_flexible_classifier_handles_shorthand_and_relative_year(self) -> None:
+        message = SimpleNamespace(
+            content='{"interpreted_question":"Which regions had the highest sales in 2025?",'
+            '"intent":"sales-by-region","year":"2025"}'
+        )
+        response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        create = unittest.mock.Mock(return_value=response)
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+        with patch("insights_agent._groq_client", return_value=client):
+            result = _llm_classify("REV by region last yr pls")
+
+        self.assertEqual(
+            ("regional_sales", 2025, "Which regions had the highest sales in 2025?"),
+            result,
+        )
+        request = create.call_args.kwargs
+        self.assertEqual({"type": "json_object"}, request["response_format"])
+        self.assertIn("minor spelling mistakes", request["messages"][0]["content"])
+        self.assertIn("unsupported", request["messages"][0]["content"])
+
+    def test_unsupported_or_unrankable_requests_are_not_misclassified(self) -> None:
+        with self.assertRaisesRegex(ValueError, "couldn't confidently match"):
+            _normalize_classification(
+                {"intent": "unsupported", "year": None},
+                "What was our profit?",
+            )
+        self.assertEqual(
+            ("annual_comparison", None, "Compare yearly sales and spend."),
+            _normalize_classification(
+                {
+                    "intent": "sales-vs-procurement",
+                    "year": None,
+                    "interpreted_question": "Compare yearly sales and spend.",
+                },
+                "sales spend each year",
+            ),
+        )
+
+    def test_rejects_invalid_llm_year(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid year"):
+            _normalize_classification({"intent": "sales_trend", "year": "2025 please"}, "sales trend")
+
+    def test_analysis_retains_original_and_grammatically_interpreted_question(self) -> None:
+        interpreted = "Show the monthly sales trend for 2025."
+        with (
+            patch("insights_agent._llm_classify", return_value=("sales_trend", 2025, interpreted)),
+            patch("insights_agent._generate_ai_narrative", return_value="AI-generated monthly sales insight.") as generate,
+            patch("insights_agent._validate_with_ai", return_value=(True, [])) as validate,
+        ):
+            result = analyze("sales 2025 month trend")
+        self.assertEqual("sales 2025 month trend", result.question)
+        self.assertEqual(interpreted, result.interpreted_question)
+        self.assertEqual(interpreted, generate.call_args.args[1])
+        self.assertEqual(interpreted, validate.call_args.args[-1])
+
     def test_compact_usd_display_units(self) -> None:
         self.assertEqual("$5.46M", format_money(5_463_403.71, "Millions (M)"))
         self.assertEqual("$54.6 lakh", format_money(5_463_403.71, "Lakhs"))
@@ -35,7 +115,7 @@ class AgentTests(unittest.TestCase):
 
     def test_annual_comparison_returns_four_years(self) -> None:
         with (
-            patch("insights_agent._llm_classify", return_value=("annual_comparison", None)),
+            patch("insights_agent._llm_classify", return_value=("annual_comparison", None, "Compare annual sales and procurement spend by year.")),
             patch("insights_agent._generate_ai_narrative", return_value="AI-generated comparison insight."),
             patch("insights_agent._validate_with_ai", return_value=(True, [])),
         ):
@@ -65,7 +145,7 @@ class AgentTests(unittest.TestCase):
 
     def test_sales_summary_honors_year(self) -> None:
         with (
-            patch("insights_agent._llm_classify", return_value=("sales_summary", 2024)),
+            patch("insights_agent._llm_classify", return_value=("sales_summary", 2024, "Give me a sales summary for 2024.")),
             patch("insights_agent._generate_ai_narrative", return_value="AI-generated sales insight."),
             patch("insights_agent._correct_ai_narrative", return_value="Corrected sales insight."),
             patch(
@@ -87,7 +167,7 @@ class AgentTests(unittest.TestCase):
 
     def test_failed_supplier_insight_is_corrected_and_revalidated(self) -> None:
         with (
-            patch("insights_agent._llm_classify", return_value=("supplier_performance", None)),
+            patch("insights_agent._llm_classify", return_value=("supplier_performance", None, "Compare suppliers by on-time delivery.")),
             patch("insights_agent._generate_ai_narrative", return_value="Incorrect supplier ranking."),
             patch(
                 "insights_agent._correct_ai_narrative",

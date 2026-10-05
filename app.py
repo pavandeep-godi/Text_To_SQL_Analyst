@@ -27,34 +27,45 @@ PLOTLY_CONFIG = {
     "modeBarButtons": [["toImage"]],
     "displaylogo": False,
 }
+CHART_TEMPLATE = "plotly_white"
+CHART_TEXT_COLOR = "#1c302a"
+CHART_GRID_COLOR = "rgba(127,127,127,.24)"
+CHART_PLOT_BACKGROUND = "rgba(0,0,0,0)"
+CHART_COLORS = ["#123f73", "#3e83c4", "#72aade", "#b9d9f2"]
 st.markdown(
     """
     <style>
         :root {--ink:#1c302a;--muted:#687b72;--forest:#173c32;--forest-2:#245849;--mint:#bcebd1;--coral:#e8875d;}
-        [data-testid="stAppViewContainer"] {background:#f2f6f3;color:var(--ink);}
         [data-testid="stHeader"] {background:transparent;}
-        .block-container {padding:1.5rem 2.2rem 3rem;max-width:1500px;}
+        .block-container {padding:clamp(1rem,2vw,1.5rem) clamp(.9rem,4vw,2.2rem) 3rem;max-width:1500px;}
         [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], button[data-testid="collapsedControl"] {display:none !important;}
         .hero {min-height:168px;padding:1.65rem 1.9rem;border:1px solid #28594a;border-radius:23px;background:linear-gradient(112deg,#122f29 0%,#1d5142 66%,#286754 100%);color:#fff;margin:.5rem 0 1.15rem;box-shadow:0 16px 36px #173c321c;position:relative;overflow:hidden;}
         .hero:after {content:"";position:absolute;width:250px;height:250px;border-radius:50%;right:-55px;top:-120px;background:radial-gradient(circle,#bcebd155 0%,#bcebd100 70%);pointer-events:none;}
         .hero-kicker {color:#bcebd1;text-transform:uppercase;letter-spacing:.17em;font-size:.72rem;font-weight:750;margin:0 0 .6rem;}
-        .hero h1 {color:#fff;letter-spacing:-.045em;margin:0 0 .45rem;font-size:2.55rem;}
+        .hero h1 {color:#fff;letter-spacing:-.045em;margin:0 0 .45rem;font-size:clamp(1.8rem,4vw,2.55rem);line-height:1.1;}
         .hero p {color:#e0eee6;margin:0;font-size:1.02rem;max-width:690px;}
-        [data-testid="stMetric"] {background:#fff;border:1px solid #dce9df;padding:16px 18px;border-radius:17px;box-shadow:0 7px 20px #173c3209;}
-        [data-testid="stMetricLabel"] p {color:#687b72;font-weight:650;}
-        [data-testid="stMetricValue"] {color:#173c32;letter-spacing:-.03em;}
-        [data-testid="stTextInput"] input {border-color:#d2e0d6;border-radius:12px;background:#fff;min-height:3.1rem;}
+        [data-testid="stMetric"] {background:rgba(127,127,127,.07);border:1px solid rgba(127,127,127,.3);padding:16px 18px;border-radius:17px;box-shadow:0 7px 20px rgba(23,60,50,.06);}
+        [data-testid="stMetricLabel"] p {font-weight:650;opacity:.82;}
+        [data-testid="stMetricValue"] {letter-spacing:-.03em;}
+        [data-testid="stTextInput"] input {border:1px solid rgba(127,127,127,.45);border-radius:12px;background:transparent !important;color:inherit !important;min-height:3.1rem;}
         [data-testid="stTextInput"] input:focus {border-color:#2d795e;box-shadow:0 0 0 .15rem #2d795e2b;}
         button[kind="primary"] {background:#1d624c;border:1px solid #1d624c;border-radius:11px;color:#fff;font-weight:680;min-height:2.75rem;}
         button[kind="primary"]:hover {background:#164d3c;border-color:#164d3c;color:#fff;}
-        div[data-testid="stPopover"] button {border-radius:12px;border:1px solid #cbded1;color:#173c32;background:#fff;font-weight:650;min-height:2.7rem;}
-        [data-testid="stExpander"] {background:#fff;border:1px solid #dce9df;border-radius:14px;}
-        [data-testid="stAlert"] {border-radius:13px;border:1px solid #dce9df;}
+        [data-testid="stExpander"] {background:transparent;border:1px solid rgba(127,127,127,.3);border-radius:14px;}
+        [data-testid="stAlert"] {border-radius:13px;border:1px solid rgba(127,127,127,.3);}
         [data-testid="stPlotlyChart"], .stPlotlyChart {width:100% !important;}
-        h1,h2,h3 {color:#173c32;letter-spacing:-.025em;}
-        .small-note {color:#687b72;font-size:.9rem;}
-        .section-note {padding:.7rem .9rem;border-left:3px solid #2d795e;background:#e8f3eb;border-radius:0 10px 10px 0;color:#355348;font-size:.91rem;}
-        [data-testid="stCaptionContainer"] p {color:#687b72;}
+        [data-testid="stPlotlyChart"] .main-svg .bg {fill:Canvas !important;fill-opacity:1 !important;}
+        [data-testid="stPlotlyChart"] .main-svg text {fill:CanvasText !important;}
+        [data-testid="stPlotlyChart"] .main-svg .gridlayer path {stroke:color-mix(in srgb, CanvasText 18%, Canvas) !important;}
+        h1,h2,h3 {letter-spacing:-.025em;}
+        .small-note {color:inherit;opacity:.78;font-size:.9rem;}
+        .section-note {padding:.7rem .9rem;border-left:3px solid #2d795e;background:rgba(45,121,94,.14);border-radius:0 10px 10px 0;color:inherit;font-size:.91rem;}
+        @media (max-width: 640px) {
+            .block-container {padding:.85rem .85rem 2rem;}
+            .hero {min-height:0;padding:1.25rem 1.15rem;border-radius:18px;}
+            .hero p {font-size:.96rem;}
+            [data-testid="stMetric"] {padding:12px;border-radius:14px;}
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -72,7 +83,12 @@ with st.expander("About this demo", expanded=False):
     with about_method:
         st.markdown("#### How answers are produced")
         st.write("Groq interprets each question, writes a result-based insight, and independently validates it. If validation finds an issue, AI automatically corrects the insight and validates it again, up to two times. DuckDB runs reviewed SQL locally; the model cannot generate executable SQL.")
-    st.caption("Synthetic data only. Do not submit confidential information.")
+    st.caption(
+        "This demo uses a general-purpose AI model, not a custom-trained chatbot. "
+        "It can understand many ways of asking, though ambiguous or unsupported requests may need rephrasing. "
+        "Review the interpretation and results; name a metric, group, and year when helpful. "
+        "Synthetic data only—do not submit confidential information."
+    )
 
 st.markdown(
     '<div class="hero"><div class="hero-kicker">Fieldnote · Business intelligence</div>'
@@ -84,7 +100,7 @@ st.markdown(
 display_unit = DEFAULT_DISPLAY_UNIT
 
 st.markdown("### What can I ask about?")
-st.caption("Explore two sample datasets. Choose a starter question to copy it into the question box, or write your own.")
+st.caption("Explore two sample datasets. Choose a starter question, or type a full question, shorthand, or rough phrase—the AI will restate it clearly before analyzing.")
 
 
 def use_starter_question(prompt: str) -> None:
@@ -113,6 +129,23 @@ with sales_topic:
                 on_click=use_starter_question,
                 args=("Which products generated the most revenue?",),
             )
+        sales_examples_left, sales_examples_right = st.columns(2)
+        with sales_examples_left:
+            st.button(
+                "Sales by region",
+                key="starter_sales_region",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Which regions had the highest sales in 2025?",),
+            )
+        with sales_examples_right:
+            st.button(
+                "Sales by segment",
+                key="starter_sales_segment",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Compare sales by customer segment",),
+            )
 
 with procurement_topic:
     with st.container(border=True):
@@ -135,6 +168,23 @@ with procurement_topic:
                 on_click=use_starter_question,
                 args=("Show procurement spend by category in 2025",),
             )
+        procurement_examples_left, procurement_examples_right = st.columns(2)
+        with procurement_examples_left:
+            st.button(
+                "Supplier quality & spend",
+                key="starter_supplier_scorecard",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Compare suppliers by procurement spend and quality rating",),
+            )
+        with procurement_examples_right:
+            st.button(
+                "Annual sales vs spend",
+                key="starter_annual_comparison",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Compare annual sales and procurement spend by year",),
+            )
 
 st.markdown("#### Your business question")
 
@@ -142,8 +192,13 @@ question = st.text_input(
     "Your business question",
     label_visibility="collapsed",
     key="question_input",
-    placeholder="e.g. Which regions had the highest sales in 2025?",
-    help="Ask about sales, products, regions, customer segments, procurement, suppliers, delivery, or annual comparisons.",
+    placeholder="e.g. ‘sales 2025 month trend’ or ‘which place sold most last year?’",
+    help="You can use shorthand, casual wording, or imperfect grammar. Ask about sales, products, regions, customer segments, procurement, suppliers, delivery, or annual comparisons.",
+)
+st.caption(
+    "AI note: this demo uses a general-purpose model rather than a custom-trained chatbot. "
+    "It handles many phrasings, but ambiguous or unsupported requests may need clarification; "
+    "check the interpreted question and include a metric, group, or year when you can."
 )
 st.caption("Monetary amounts are shown in compact USD millions. Exact values are available in the results table and CSV download.")
 api_key_configured = has_groq_api_key()
@@ -162,6 +217,9 @@ if run:
     st.subheader(result.title)
     # Escape currency markers so Streamlit does not mistake dollar amounts for LaTeX.
     st.markdown(result.narrative.replace("$", r"\$"))
+    if result.interpreted_question.strip().casefold().rstrip(".!?") != result.question.strip().casefold().rstrip(".!?"):
+        st.caption(f"Understood as: {result.interpreted_question}")
+
     st.caption(f"Groq interpreted this as `{result.intent}` · Rows returned: {len(result.frame):,}")
     if result.ai_validation_passed:
         if result.ai_correction_attempts:
@@ -211,10 +269,10 @@ if run:
             text="Value label",
             title="Revenue and gross margin",
             labels={"Amount": f"USD ({suffix})"},
-            color_discrete_sequence=["#1d624c", "#e8875d"],
-            template="plotly_white",
+            color_discrete_sequence=CHART_COLORS,
+            template=CHART_TEMPLATE,
         )
-        summary_figure.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color="#1c302a", size=13))
+        summary_figure.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color=CHART_TEXT_COLOR, size=13))
         st.plotly_chart(summary_figure, width="stretch", config=PLOTLY_CONFIG)
     if result.intent != "sales_summary" and not result.frame.empty and result.chart_type != "metric":
         divisor, suffix = DISPLAY_UNITS[display_unit]
@@ -242,13 +300,15 @@ if run:
                 x="_plot_value",
                 y=category,
                 orientation="h",
+                color="_plot_value",
+                color_continuous_scale=[CHART_COLORS[-1], CHART_COLORS[0]],
                 text=labels,
                 title=title,
                 labels={"_plot_value": axis_label, category: category.replace("_", " ").title()},
-                color_discrete_sequence=["#1d624c" if monetary else "#e8875d"],
-                template="plotly_white",
+                template=CHART_TEMPLATE,
             )
-            chart.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color="#1c302a", size=12))
+            chart.update_coloraxes(showscale=False)
+            chart.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color=CHART_TEXT_COLOR, size=12))
             chart_specs.append((title, chart, True))
 
         if result.intent == "annual_comparison":
@@ -270,8 +330,8 @@ if run:
                 color="Measure",
                 title="Sales and procurement spend by year",
                 labels={"Amount": unit_axis_label, "fiscal_year": "Fiscal year"},
-                color_discrete_map={"Sales": "#1d624c", "Procurement spend": "#e8875d"},
-                template="plotly_white",
+                color_discrete_map={"Sales": CHART_COLORS[0], "Procurement spend": CHART_COLORS[1]},
+                template=CHART_TEMPLATE,
                 barmode="group",
             )
             chart.update_traces(texttemplate="$%{y:.2f}M", textposition="outside", cliponaxis=False, textfont=dict(size=11))
@@ -286,8 +346,8 @@ if run:
                 y=value_columns,
                 markers=True,
                 labels={"period": "Month", "net_revenue": f"Sales ({suffix})", "gross_margin": f"Gross margin ({suffix})"},
-                color_discrete_sequence=["#1d624c", "#e8875d"],
-                template="plotly_white",
+                color_discrete_sequence=CHART_COLORS,
+                template=CHART_TEMPLATE,
             )
             for trace in chart.data:
                 last_y = float(trace.y[-1])
@@ -342,12 +402,12 @@ if run:
                 showlegend=result.intent in ("annual_comparison", "sales_trend"),
                 legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0),
                 paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#ffffff",
-                font=dict(color="#1c302a", family="Inter, sans-serif"),
-                xaxis=dict(automargin=True, gridcolor="#e8eee9"),
+                plot_bgcolor=CHART_PLOT_BACKGROUND,
+                font=dict(color=CHART_TEXT_COLOR, family="Inter, sans-serif"),
+                xaxis=dict(automargin=True, gridcolor=CHART_GRID_COLOR),
                 yaxis=dict(
                     automargin=True,
-                    gridcolor="#e8eee9",
+                    gridcolor=CHART_GRID_COLOR,
                     autorange="reversed" if reverse_categories else True,
                     tickformat=".1f",
                 ),

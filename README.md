@@ -4,6 +4,8 @@ A small, beginner-friendly proof of concept that turns business questions into a
 
 > This is a demo, not a financial reporting system. The included records are generated examples and do not represent real customers, suppliers, or transactions.
 
+> **A note about the AI:** This demo uses a general-purpose language model; it is not a custom-trained machine-learning chatbot. It can understand many phrasings, but ambiguous or unsupported requests may need clarification. Check the question interpretation and results, and include a metric, group, and year when helpful.
+
 ## What it can answer
 
 - Sales summaries, monthly trends, top products, regions, and customer segments
@@ -18,6 +20,9 @@ Example questions:
 - “Which products generated the most revenue?”
 - “Compare sales and procurement spend by year”
 - “Which suppliers have the best on-time delivery?”
+- “Which regions had the highest sales in 2025?”
+- “Compare sales by customer segment”
+- “Compare suppliers by procurement spend and quality rating”
 
 ## Get started
 
@@ -42,7 +47,7 @@ The demo's datasets are already included in `data/`. Run the generator again whe
 ## How it works
 
 1. **Sample data:** `data_generator.py` creates realistic-looking sales and procurement CSV data. Each dataset has more than 20 columns covering dates, products or suppliers, amounts, statuses, delivery, and business dimensions.
-2. **Understand the question:** Groq interprets the question and selects one of the supported analysis types and an optional year filter.
+2. **Understand the question:** Groq can work with complete sentences, shorthand, colloquial phrasing, common abbreviations, and minor typos. It rewrites the request as a clear question without changing its intent, shows that interpretation in the app, and selects a supported analysis and optional year filter. Requests outside the available analyses are flagged rather than silently treated as a different question.
 3. **Generate the insight:** After the local query returns aggregated results, Groq writes a short explanation grounded in those results.
 4. **Run safely:** DuckDB runs a reviewed, parameterized SQL template against the local CSV files. Arbitrary user- or model-written SQL is not executed.
 5. **Validate with AI:** A separate Groq review checks whether the narrative answers the question and whether its claims are supported by the computed result. If it finds an error, Groq receives the exact review notes, corrects the insight from the query output, and validates it again (up to two correction attempts). Any issue that remains is shown as a warning. Basic Python checks also flag empty results and negative sales/spend values.
