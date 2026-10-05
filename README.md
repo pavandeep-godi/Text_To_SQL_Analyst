@@ -40,6 +40,10 @@ Select **About this demo** on the main page whenever you want to open the short 
 
 The app has no left sidebar or display-unit input. Monetary amounts are automatically abbreviated in USD millions for readability; the downloadable CSV and raw query results preserve exact amounts. Charts stretch across the available page width, with horizontal category bars for easier label reading.
 
+### Responsive layout and themes
+
+The layout adapts to narrow mobile screens, laptop windows, and wide or extended displays. On larger screens, content is capped at a readable width instead of stretching edge to edge; charts resize to the available space. The interface supports Streamlit's **System**, **Light**, and **Dark** themes, and chart backgrounds, labels, and gridlines adapt to the selected theme. Charts use coordinated blue shades: ranked categories use a pale-to-deep gradient, while comparison series use distinct blues so they remain easy to tell apart. Responsive behavior has been checked at browser viewport widths from 320 to 1,920 pixels; actual device rendering can still vary by browser and display settings.
+
 For annual comparisons, **Sales** means net sales after discounts and **Procurement spend** means purchase-order totals. The analysis also shows gross sales, gross margin, procurement as a percentage of sales, and year-over-year movement. Full years are compared with full years; 2026 year-to-date growth is compared with the same dates in 2025. Procurement-to-sales is not a profit or margin measure.
 
 The demo's datasets are already included in `data/`. Run the generator again whenever you want to replace them with the same reproducible sample data.
