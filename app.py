@@ -37,7 +37,7 @@ st.markdown(
     <style>
         :root {--ink:#1c302a;--muted:#687b72;--forest:#173c32;--forest-2:#245849;--mint:#bcebd1;--coral:#e8875d;}
         [data-testid="stHeader"] {background:transparent;}
-        .block-container {padding:clamp(1rem,2vw,1.5rem) clamp(.9rem,4vw,2.2rem) 3rem;max-width:1500px;}
+        .block-container {padding:clamp(4rem,4vw,4.5rem) clamp(.9rem,4vw,2.2rem) 3rem;max-width:1500px;}
         [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], button[data-testid="collapsedControl"] {display:none !important;}
         .hero {min-height:168px;padding:1.65rem 1.9rem;border:1px solid #28594a;border-radius:23px;background:linear-gradient(112deg,#122f29 0%,#1d5142 66%,#286754 100%);color:#fff;margin:.5rem 0 1.15rem;box-shadow:0 16px 36px #173c321c;position:relative;overflow:hidden;}
         .hero:after {content:"";position:absolute;width:250px;height:250px;border-radius:50%;right:-55px;top:-120px;background:radial-gradient(circle,#bcebd155 0%,#bcebd100 70%);pointer-events:none;}
@@ -61,7 +61,7 @@ st.markdown(
         .small-note {color:inherit;opacity:.78;font-size:.9rem;}
         .section-note {padding:.7rem .9rem;border-left:3px solid #2d795e;background:rgba(45,121,94,.14);border-radius:0 10px 10px 0;color:inherit;font-size:.91rem;}
         @media (max-width: 640px) {
-            .block-container {padding:.85rem .85rem 2rem;}
+            .block-container {padding:4rem .85rem 2rem;}
             .hero {min-height:0;padding:1.25rem 1.15rem;border-radius:18px;}
             .hero p {font-size:.96rem;}
             [data-testid="stMetric"] {padding:12px;border-radius:14px;}
