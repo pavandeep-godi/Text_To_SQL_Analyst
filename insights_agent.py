@@ -56,6 +56,7 @@ class Analysis:
     warnings: list[str]
     ai_validation_passed: bool
     ai_validation_issues: list[str]
+    ai_correction_attempts: int = 0
 
 
 def has_groq_api_key() -> bool:
@@ -86,6 +87,8 @@ def _llm_classify(question: str) -> tuple[str, int | None]:
                 {"role": "system", "content": (
                     "Classify a business analytics question. Return only JSON with keys intent and year. "
                     f"intent must be one of: {', '.join(sorted(INTENTS))}. year is 2023, 2024, 2025, 2026, or null. "
+                    "Choose delivery_performance whenever the question asks about delivery, on-time/late rates, or lead time, even when it mentions suppliers. "
+                    "Use supplier_performance for broader supplier scorecards, quality, or spend questions that are not specifically about delivery. "
                     "Never return SQL, code, or prose."
                 )},
                 {"role": "user", "content": question},
@@ -155,6 +158,55 @@ def _generate_ai_narrative(
         raise
     except Exception as exc:
         raise RuntimeError(f"Groq could not generate the insight: {exc}") from exc
+
+
+def _correct_ai_narrative(
+    question: str,
+    intent: str,
+    year: int | None,
+    frame: pd.DataFrame,
+    narrative: str,
+    issues: list[str],
+    display_unit: str,
+) -> str:
+    """Use Groq to correct a flagged insight using only the computed result."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are correcting a business-analysis summary after an independent AI reviewer found factual errors. "
+                "The computed result is the sole source of truth; the previous answer is untrusted and may be wrong. "
+                "Read the actual metric values, sort numerically before stating rankings, and remove every unsupported claim. "
+                "For supplier delivery questions, rank by on_time_pct, not by procurement spend or input row order. "
+                f"Use compact USD {display_unit} formatting and preserve the 2026 year-to-date caveat through {DATA_CUTOFF}. "
+                "Return only the corrected insight in 2-4 concise sentences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question: {question}\nAnalysis type: {intent}\nYear filter: {year or 'all available years'}\n"
+                f"Computed result (source of truth): {frame.head(12).to_json(orient='records')}\n"
+                f"Reviewer issues to fix: {json.dumps(issues)}\n"
+                f"Previous insight to correct: {narrative}"
+            ),
+        },
+    ]
+    try:
+        response = _groq_client().chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
+            messages=messages,
+            temperature=0,
+            max_tokens=700,
+        )
+        corrected = (response.choices[0].message.content or "").strip()
+        if not corrected:
+            raise RuntimeError("Groq returned an empty corrected insight. Please try again.")
+        return corrected
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Groq could not correct the insight: {exc}") from exc
 
 
 def _validate_with_ai(
@@ -331,8 +383,20 @@ def analyze(question: str, display_unit: str = DEFAULT_DISPLAY_UNIT) -> Analysis
     ai_validation_passed, ai_validation_issues = _validate_with_ai(
         question, intent, year, frame, narrative, display_unit
     )
+    correction_attempts = 0
+    max_correction_attempts = 2
+    while not ai_validation_passed and correction_attempts < max_correction_attempts:
+        correction_attempts += 1
+        narrative = _correct_ai_narrative(
+            question, intent, year, frame, narrative, ai_validation_issues, display_unit
+        )
+        ai_validation_passed, ai_validation_issues = _validate_with_ai(
+            question, intent, year, frame, narrative, display_unit
+        )
     if not ai_validation_passed:
         detail = "; ".join(ai_validation_issues) or "The AI reviewer flagged this result."
-        warnings.append(f"AI validation flagged this insight: {detail}")
+        warnings.append(
+            f"AI validation still flagged this insight after {correction_attempts} automatic correction attempt(s): {detail}"
+        )
     return Analysis(question, intent, year, title, sql, params, frame,
-                    narrative, chart, warnings, ai_validation_passed, ai_validation_issues)
+                    narrative, chart, warnings, ai_validation_passed, ai_validation_issues, correction_attempts)

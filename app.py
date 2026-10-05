@@ -60,6 +60,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+with st.expander("About this demo", expanded=False):
+    about_scope, about_data, about_method = st.columns(3, gap="large")
+    with about_scope:
+        st.markdown("#### About the company")
+        st.write("This fictional company is a B2B technology provider that sells analytics software, cloud products, hardware, and professional services to business and public-sector customers.")
+        st.write("It also purchases components, cloud and logistics services, packaging, and other supplies to fulfil customer orders; all records are synthetic and for demonstration only.")
+    with about_data:
+        st.markdown("#### What the datasets cover")
+        st.write("Sales includes customers, products, revenue, discounts, payments, shipping, and returns. Procurement includes suppliers, purchase orders, spend, delivery, quality, and invoices.")
+    with about_method:
+        st.markdown("#### How answers are produced")
+        st.write("Groq interprets each question, writes a result-based insight, and independently validates it. If validation finds an issue, AI automatically corrects the insight and validates it again, up to two times. DuckDB runs reviewed SQL locally; the model cannot generate executable SQL.")
+    st.caption("Synthetic data only. Do not submit confidential information.")
+
 st.markdown(
     '<div class="hero"><div class="hero-kicker">Fieldnote · Business intelligence</div>'
     '<h1>Make the numbers make sense.</h1>'
@@ -69,21 +83,65 @@ st.markdown(
 
 display_unit = DEFAULT_DISPLAY_UNIT
 
-prompt_label, about_action = st.columns([5, 1], vertical_alignment="center")
-with prompt_label:
-    st.markdown("#### Your business question")
-with about_action:
-    with st.popover("About this demo"):
-        st.markdown("### A practical data analyst, on demand")
-        st.write("This proof of concept explores synthetic sales and procurement records from 2023–2026, with 2,000 rows in each dataset.")
-        st.markdown("**Sales data** covers customers, products, orders, revenue, margin, discounts, payment, shipping, and returns.")
-        st.markdown("**Procurement data** covers suppliers, purchase orders, costs, delivery, quality, invoices, and payment status.")
-        st.write("Groq interprets your question, writes an insight from aggregated results, and independently reviews its claims. DuckDB runs a fixed, safe SQL template locally; the model cannot generate executable SQL.")
-        st.caption("Sample data only. Do not submit confidential information.")
+st.markdown("### What can I ask about?")
+st.caption("Explore two sample datasets. Choose a starter question to copy it into the question box, or write your own.")
+
+
+def use_starter_question(prompt: str) -> None:
+    st.session_state["question_input"] = prompt
+
+
+sales_topic, procurement_topic = st.columns(2, gap="medium")
+with sales_topic:
+    with st.container(border=True):
+        st.markdown("#### 🛍️ Sales data")
+        st.write("Orders, customers, products, regions, sales channels, discounts, net sales, gross margin, payments, shipping, and returns.")
+        sales_examples_left, sales_examples_right = st.columns(2)
+        with sales_examples_left:
+            st.button(
+                "Monthly sales trends",
+                key="starter_sales_trend",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Show monthly sales trends in 2025",),
+            )
+        with sales_examples_right:
+            st.button(
+                "Top products",
+                key="starter_top_products",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Which products generated the most revenue?",),
+            )
+
+with procurement_topic:
+    with st.container(border=True):
+        st.markdown("#### 📦 Procurement data")
+        st.write("Purchase orders, suppliers, item categories, spend, quantities, delivery dates, lead times, quality, invoice status, and payment terms.")
+        procurement_examples_left, procurement_examples_right = st.columns(2)
+        with procurement_examples_left:
+            st.button(
+                "Supplier delivery",
+                key="starter_supplier_delivery",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Which suppliers have the best on-time delivery?",),
+            )
+        with procurement_examples_right:
+            st.button(
+                "Spend by category",
+                key="starter_procurement_spend",
+                width="stretch",
+                on_click=use_starter_question,
+                args=("Show procurement spend by category in 2025",),
+            )
+
+st.markdown("#### Your business question")
 
 question = st.text_input(
     "Your business question",
     label_visibility="collapsed",
+    key="question_input",
     placeholder="e.g. Which regions had the highest sales in 2025?",
     help="Ask about sales, products, regions, customer segments, procurement, suppliers, delivery, or annual comparisons.",
 )
@@ -106,9 +164,18 @@ if run:
     st.markdown(result.narrative.replace("$", r"\$"))
     st.caption(f"Groq interpreted this as `{result.intent}` · Rows returned: {len(result.frame):,}")
     if result.ai_validation_passed:
-        st.success("AI validation passed: the reviewer found the insight supported by the query result.")
+        if result.ai_correction_attempts:
+            attempt_label = "attempt" if result.ai_correction_attempts == 1 else "attempts"
+            st.success(
+                f"AI validation passed after Groq corrected the insight ({result.ai_correction_attempts} revision {attempt_label})."
+            )
+        else:
+            st.success("AI validation passed: the reviewer found the insight supported by the query result.")
     else:
-        st.warning("AI validation flagged this insight: " + ("; ".join(result.ai_validation_issues) or "review recommended"))
+        st.warning(
+            f"AI validation still flagged the insight after {result.ai_correction_attempts} automatic revision attempt(s): "
+            + ("; ".join(result.ai_validation_issues) or "human review is recommended")
+        )
 
     if result.intent == "annual_comparison" and not result.frame.empty:
         st.caption(

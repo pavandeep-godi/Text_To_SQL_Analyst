@@ -67,14 +67,47 @@ class AgentTests(unittest.TestCase):
         with (
             patch("insights_agent._llm_classify", return_value=("sales_summary", 2024)),
             patch("insights_agent._generate_ai_narrative", return_value="AI-generated sales insight."),
-            patch("insights_agent._validate_with_ai", return_value=(False, ["Revenue claim not supported."])),
+            patch("insights_agent._correct_ai_narrative", return_value="Corrected sales insight."),
+            patch(
+                "insights_agent._validate_with_ai",
+                side_effect=[
+                    (False, ["Revenue claim not supported."]),
+                    (False, ["Corrected claim still needs review."]),
+                    (False, ["Validation still fails."]),
+                ],
+            ),
         ):
             result = analyze("Give me a sales summary for 2024")
         self.assertEqual("sales_summary", result.intent)
         self.assertEqual(2024, result.year)
         self.assertGreater(result.frame.iloc[0]["net_revenue"], 0)
         self.assertFalse(result.ai_validation_passed)
-        self.assertIn("AI validation flagged", result.warnings[-1])
+        self.assertEqual(2, result.ai_correction_attempts)
+        self.assertIn("after 2 automatic correction", result.warnings[-1])
+
+    def test_failed_supplier_insight_is_corrected_and_revalidated(self) -> None:
+        with (
+            patch("insights_agent._llm_classify", return_value=("supplier_performance", None)),
+            patch("insights_agent._generate_ai_narrative", return_value="Incorrect supplier ranking."),
+            patch(
+                "insights_agent._correct_ai_narrative",
+                return_value="Nimbus Cloud Supply ranks second by on-time delivery at 43.23%.",
+            ) as correction,
+            patch(
+                "insights_agent._validate_with_ai",
+                side_effect=[
+                    (False, ["Supplier ranking does not match on-time percentages."]),
+                    (True, []),
+                ],
+            ) as validation,
+        ):
+            result = analyze("Which suppliers have the best on-time delivery?")
+
+        self.assertTrue(result.ai_validation_passed)
+        self.assertEqual(1, result.ai_correction_attempts)
+        self.assertEqual("Nimbus Cloud Supply ranks second by on-time delivery at 43.23%.", result.narrative)
+        correction.assert_called_once()
+        self.assertEqual(2, validation.call_count)
 
     def test_ai_reviewer_parses_groq_validation_verdict(self) -> None:
         message = SimpleNamespace(content='{"passed": false, "issues": ["Unsupported comparison."]}')

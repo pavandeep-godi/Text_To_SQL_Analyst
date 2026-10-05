@@ -45,14 +45,14 @@ The demo's datasets are already included in `data/`. Run the generator again whe
 2. **Understand the question:** Groq interprets the question and selects one of the supported analysis types and an optional year filter.
 3. **Generate the insight:** After the local query returns aggregated results, Groq writes a short explanation grounded in those results.
 4. **Run safely:** DuckDB runs a reviewed, parameterized SQL template against the local CSV files. Arbitrary user- or model-written SQL is not executed.
-5. **Validate with AI:** A separate Groq review checks whether the narrative answers the question and whether its claims are supported by the computed result. A failed review is shown as a warning. Basic Python checks also flag empty results and negative sales/spend values.
+5. **Validate with AI:** A separate Groq review checks whether the narrative answers the question and whether its claims are supported by the computed result. If it finds an error, Groq receives the exact review notes, corrects the insight from the query output, and validates it again (up to two correction attempts). Any issue that remains is shown as a warning. Basic Python checks also flag empty results and negative sales/spend values.
 6. **Visualize:** Charts, KPI cards, the AI-written takeaway, validation status, and result table are displayed in Streamlit.
 
 ## Required Groq setup
 
 Groq is required to analyze questions. Copy `.env.example` to `.env`, enter your key as the value of `GROQ_API_KEY`, and restart Streamlit. You can optionally change `GROQ_MODEL`; the configured default is `qwen/qwen3.8-27b` (confirm model availability in your Groq account). Keep `.env` private and never commit or share it. You must have access to the Groq API; usage limits and terms depend on your account.
 
-Each analysis calls Groq three times: to classify the question, write an insight from the query output, and independently validate that insight against the question and computed result. The question and a small, aggregated result (up to 12 rows) are sent to Groq for these steps. Do not enter confidential or personally identifiable information. The full CSV data and SQL execution stay local; generated SQL is never executed. A failed AI review is prominently flagged but does not automatically rewrite the result, so treat flagged answers as needing human review.
+Each analysis calls Groq to classify the question, write an insight from the query output, and independently validate that insight against the question and computed result. If validation finds a problem, AI automatically revises the insight using the review notes and query results, then validates it again (up to two correction attempts). The question and a small, aggregated result (up to 12 rows) are sent to Groq for these steps. Do not enter confidential or personally identifiable information. The full CSV data and SQL execution stay local; generated SQL is never executed. If the insight still fails after the retries, the app shows a warning and recommends human review.
 
 ## Data fields
 
