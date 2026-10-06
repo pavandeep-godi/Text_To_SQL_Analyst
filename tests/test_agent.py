@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from data_generator import generate_procurement, generate_sales
-from insights_agent import _llm_classify, _normalize_classification, _validate_with_ai, analyze, classify_question, format_money
+from insights_agent import _comparison_years, _llm_classify, _normalize_classification, _validate_with_ai, analyze, classify_question, format_money
 
 
 class DataGenerationTests(unittest.TestCase):
@@ -67,6 +67,36 @@ class AgentTests(unittest.TestCase):
         self.assertEqual({"type": "json_object"}, request["response_format"])
         self.assertIn("minor spelling mistakes", request["messages"][0]["content"])
         self.assertIn("unsupported", request["messages"][0]["content"])
+        self.assertIn("2024 vs 2025 sales and procurement breakdown", request["messages"][0]["content"])
+
+    def test_extracts_only_explicitly_compared_supported_years(self) -> None:
+        self.assertEqual((2024, 2025), _comparison_years("2024 vs 2025 breakdown"))
+        self.assertEqual((2025, 2026), _comparison_years("Compare 2025 and 2026 sales"))
+        self.assertIsNone(_comparison_years("Show sales in 2025"))
+        self.assertIsNone(_comparison_years("Compare sales in 2022 and 2025"))
+
+    def test_two_year_analysis_filters_to_requested_years_and_reports_deltas(self) -> None:
+        captured: dict[str, pd.DataFrame] = {}
+
+        def generate(_question: str, _interpreted: str, _intent: str, _year: int | None, frame: pd.DataFrame, _unit: str) -> str:
+            captured["frame"] = frame.copy()
+            return "AI-generated two-year comparison insight."
+
+        with (
+            patch(
+                "insights_agent._llm_classify",
+                return_value=("annual_comparison", None, "Compare sales and procurement in 2024 and 2025."),
+            ),
+            patch("insights_agent._generate_ai_narrative", side_effect=generate),
+            patch("insights_agent._validate_with_ai", return_value=(True, [])),
+        ):
+            result = analyze("2024 vs 2025 breakdown")
+
+        self.assertEqual((2024, 2025), result.comparison_years)
+        self.assertEqual("Sales vs procurement: 2024 vs 2025", result.title)
+        self.assertEqual([2024, 2025], result.frame["fiscal_year"].tolist())
+        self.assertEqual([2024, 2025], captured["frame"]["fiscal_year"].tolist())
+        self.assertTrue(result.ai_validation_passed)
 
     def test_unsupported_or_unrankable_requests_are_not_misclassified(self) -> None:
         with self.assertRaisesRegex(ValueError, "couldn't confidently match"):

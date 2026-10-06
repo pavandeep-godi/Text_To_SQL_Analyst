@@ -236,18 +236,53 @@ if run:
         )
 
     if result.intent == "annual_comparison" and not result.frame.empty:
-        st.caption(
-            "Sales here means net sales after discounts. Procurement spend is purchase-order spend; "
-            "comparing these is not the same as comparing profit and margin. 2026 is year-to-date; "
-            "its year-over-year change uses the matching period in 2025."
-        )
-        complete_year = result.frame.loc[result.frame["fiscal_year"] < 2026].iloc[-1]
-        c1, c2, c3, c4 = st.columns(4)
-        full_year = int(complete_year["fiscal_year"])
-        c1.metric(f"{full_year} sales", format_money(complete_year["sales_revenue"], display_unit))
-        c2.metric(f"{full_year} procurement spend", format_money(complete_year["procurement_spend"], display_unit))
-        c3.metric(f"{full_year} gross sales", format_money(complete_year["gross_sales"], display_unit))
-        c4.metric(f"Procurement / sales ({full_year})", f"{complete_year['procurement_to_sales_pct']:.1f}%")
+        if result.comparison_years:
+            earlier_year, later_year = result.comparison_years
+            st.caption(
+                f"Comparing only {earlier_year} and {later_year}. Sales means net sales after discounts; "
+                "procurement spend is purchase-order spend. Their ratio is not profit or a margin."
+            )
+            comparison_rows = result.frame.set_index("fiscal_year")
+            earlier = comparison_rows.loc[earlier_year]
+            later = comparison_rows.loc[later_year]
+
+            def comparison_delta(current: float, previous: float) -> str:
+                difference = current - previous
+                percent = difference / abs(previous) * 100 if previous else 0.0
+                sign = "+" if difference >= 0 else "−"
+                return f"{sign}{format_money(abs(difference), display_unit)} · {percent:+.1f}%"
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric(
+                f"Sales · {later_year}", format_money(later["sales_revenue"], display_unit),
+                comparison_delta(later["sales_revenue"], earlier["sales_revenue"]),
+            )
+            c2.metric(
+                f"Procurement spend · {later_year}", format_money(later["procurement_spend"], display_unit),
+                comparison_delta(later["procurement_spend"], earlier["procurement_spend"]),
+            )
+            c3.metric(
+                f"Gross margin · {later_year}", format_money(later["gross_margin"], display_unit),
+                comparison_delta(later["gross_margin"], earlier["gross_margin"]),
+            )
+            ratio_delta = later["procurement_to_sales_pct"] - earlier["procurement_to_sales_pct"]
+            c4.metric(
+                f"Procurement / sales · {later_year}", f"{later['procurement_to_sales_pct']:.1f}%",
+                f"{ratio_delta:+.1f} percentage points",
+            )
+        else:
+            st.caption(
+                "Sales here means net sales after discounts. Procurement spend is purchase-order spend; "
+                "comparing these is not the same as comparing profit and margin. 2026 is year-to-date; "
+                "its year-over-year change uses the matching period in 2025."
+            )
+            complete_year = result.frame.loc[result.frame["fiscal_year"] < 2026].iloc[-1]
+            c1, c2, c3, c4 = st.columns(4)
+            full_year = int(complete_year["fiscal_year"])
+            c1.metric(f"{full_year} sales", format_money(complete_year["sales_revenue"], display_unit))
+            c2.metric(f"{full_year} procurement spend", format_money(complete_year["procurement_spend"], display_unit))
+            c3.metric(f"{full_year} gross sales", format_money(complete_year["gross_sales"], display_unit))
+            c4.metric(f"Procurement / sales ({full_year})", f"{complete_year['procurement_to_sales_pct']:.1f}%")
     elif result.intent == "sales_summary" and not result.frame.empty:
         row = result.frame.iloc[0]
         c1, c2, c3, c4 = st.columns(4)
@@ -390,6 +425,11 @@ if run:
             "supplier_performance": "Separate scorecards keep spend, delivery reliability, and quality on their own scales for a fair comparison.",
             "delivery_performance": "Each supplier is compared on on-time delivery and average lead time; lower lead time is better.",
         }
+        if result.intent == "annual_comparison" and result.comparison_years:
+            chart_explanations["annual_comparison"] = (
+                f"Paired bars compare Sales and Procurement spend for {result.comparison_years[0]} "
+                f"and {result.comparison_years[1]} only. Labels are USD millions."
+            )
         st.markdown(
             f'<div class="section-note">{chart_explanations.get(result.intent, "Bars are ranked from strongest to weakest; each bar is labeled with its value.")}</div>',
             unsafe_allow_html=True,

@@ -23,6 +23,7 @@ Example questions:
 - “Which regions had the highest sales in 2025?”
 - “Compare sales by customer segment”
 - “Compare suppliers by procurement spend and quality rating”
+- “Compare 2024 vs 2025 sales and procurement breakdown”
 
 ## Get started
 
@@ -45,6 +46,8 @@ The app has no left sidebar or display-unit input. Monetary amounts are automati
 The layout adapts to narrow mobile screens, laptop windows, and wide or extended displays. On larger screens, content is capped at a readable width instead of stretching edge to edge; charts resize to the available space. The interface supports Streamlit's **System**, **Light**, and **Dark** themes, and chart backgrounds, labels, and gridlines adapt to the selected theme. Charts use coordinated blue shades: ranked categories use a pale-to-deep gradient, while comparison series use distinct blues so they remain easy to tell apart. Responsive behavior has been checked at browser viewport widths from 320 to 1,920 pixels; actual device rendering can still vary by browser and display settings.
 
 For annual comparisons, **Sales** means net sales after discounts and **Procurement spend** means purchase-order totals. The analysis also shows gross sales, gross margin, procurement as a percentage of sales, and year-over-year movement. Full years are compared with full years; 2026 year-to-date growth is compared with the same dates in 2025. Procurement-to-sales is not a profit or margin measure.
+
+When a question explicitly compares two supported years, such as 2024 and 2025, the annual comparison view limits its chart and breakdown to those years and shows the later year's sales, procurement spend, gross margin, and procurement-to-sales ratio with changes against the earlier year. The two-year comparison currently covers overall totals; ask about one year at a time for a regional, product, segment, supplier, or category breakdown.
 
 The demo's datasets are already included in `data/`. Run the generator again whenever you want to replace them with the same reproducible sample data.
 
