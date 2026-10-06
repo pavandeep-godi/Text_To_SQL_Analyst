@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from data_generator import generate_procurement, generate_sales
-from insights_agent import _comparison_years, _llm_classify, _normalize_classification, _validate_with_ai, analyze, classify_question, format_money
+from insights_agent import _comparison_years, _driver_metric_for, _grouped_comparison_spec, _llm_classify, _normalize_classification, _validate_with_ai, analyze, classify_question, format_money
 
 
 class DataGenerationTests(unittest.TestCase):
@@ -72,8 +72,30 @@ class AgentTests(unittest.TestCase):
     def test_extracts_only_explicitly_compared_supported_years(self) -> None:
         self.assertEqual((2024, 2025), _comparison_years("2024 vs 2025 breakdown"))
         self.assertEqual((2025, 2026), _comparison_years("Compare 2025 and 2026 sales"))
+        self.assertEqual((2025, 2026), _comparison_years("Compare 2026 vs 2025 sales"))
+        self.assertEqual((2023, 2025), _comparison_years("sales data from 2023 to 2025"))
         self.assertIsNone(_comparison_years("Show sales in 2025"))
         self.assertIsNone(_comparison_years("Compare sales in 2022 and 2025"))
+
+    def test_resolves_grouped_year_comparison_measure_and_dimension(self) -> None:
+        self.assertEqual(
+            ("sales_revenue", "segment"),
+            _grouped_comparison_spec("2023 vs 2025 sales by segment", "Compare sales by customer segment in 2023 and 2025."),
+        )
+        self.assertEqual(
+            ("procurement_spend", "category"),
+            _grouped_comparison_spec("procurement spend by category 2024 vs 2025", "Compare procurement spend by item category."),
+        )
+
+    def test_why_question_maps_to_supported_metric(self) -> None:
+        self.assertEqual(
+            "procurement_spend",
+            _driver_metric_for("Why is procurement spend high?", "Which suppliers contribute most to procurement spend?"),
+        )
+        self.assertEqual(
+            "delivery_performance",
+            _driver_metric_for("What is causing late deliveries?", "Which suppliers have the highest late-delivery rates?"),
+        )
 
     def test_two_year_analysis_filters_to_requested_years_and_reports_deltas(self) -> None:
         captured: dict[str, pd.DataFrame] = {}
@@ -97,6 +119,85 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([2024, 2025], result.frame["fiscal_year"].tolist())
         self.assertEqual([2024, 2025], captured["frame"]["fiscal_year"].tolist())
         self.assertTrue(result.ai_validation_passed)
+
+    def test_two_year_sales_by_segment_returns_each_segment_for_both_years(self) -> None:
+        with (
+            patch(
+                "insights_agent._llm_classify",
+                return_value=("grouped_year_comparison", None, "Compare sales by customer segment in 2023 and 2025."),
+            ),
+            patch("insights_agent._generate_ai_narrative", return_value="AI-generated segment comparison.") as generate,
+            patch("insights_agent._validate_with_ai", return_value=(True, [])),
+        ):
+            result = analyze("2023 vs 2025 sales by segment")
+
+        self.assertEqual("grouped_year_comparison", result.intent)
+        self.assertEqual((2023, 2025), result.comparison_years)
+        self.assertEqual("segment", result.comparison_group)
+        self.assertEqual("sales_revenue", result.comparison_metric)
+        self.assertEqual({2023, 2025}, set(result.frame["fiscal_year"]))
+        self.assertGreaterEqual(result.frame["group_name"].nunique(), 4)
+        self.assertEqual(2 * result.frame["group_name"].nunique(), len(result.frame))
+        self.assertIn("contribution_pct", result.frame.columns)
+        self.assertEqual("AI-generated segment comparison.", result.narrative)
+        self.assertTrue(result.ai_validation_passed)
+        self.assertIn("customer_segment", result.sql)
+
+    def test_grouped_comparison_with_2026_uses_matching_year_to_date_window(self) -> None:
+        with (
+            patch(
+                "insights_agent._llm_classify",
+                return_value=("grouped_year_comparison", None, "Compare sales by segment for 2025 and 2026."),
+            ),
+            patch("insights_agent._generate_ai_narrative", return_value="Matched-period comparison."),
+            patch("insights_agent._validate_with_ai", return_value=(True, [])),
+        ):
+            result = analyze("2025 vs 2026 sales by segment")
+
+        self.assertEqual((2025, 2026), result.comparison_years)
+        self.assertIn("STRFTIME(CAST(order_date AS DATE)", result.sql)
+        self.assertIn("'10-05'", result.sql)
+        self.assertEqual({2025, 2026}, set(result.frame["fiscal_year"]))
+
+    def test_why_procurement_spend_returns_category_and_supplier_evidence(self) -> None:
+        with (
+            patch(
+                "insights_agent._llm_classify",
+                return_value=("driver_analysis", None, "Which suppliers and categories contribute most to procurement spend?"),
+            ),
+            patch("insights_agent._generate_ai_narrative", return_value="The largest observed contributors are supported by the breakdown."),
+            patch("insights_agent._validate_with_ai", return_value=(True, [])),
+        ):
+            result = analyze("Why is procurement spend high?")
+
+        self.assertEqual("driver_analysis", result.intent)
+        self.assertEqual("procurement_spend", result.driver_metric)
+        self.assertEqual({"Item category", "Supplier"}, set(result.frame["driver_type"]))
+        self.assertIn("contribution_pct", result.frame.columns)
+        self.assertIn("observations", result.frame.columns)
+        self.assertGreaterEqual(len(result.frame), 6)
+        self.assertLessEqual(len(result.frame), 10)
+        self.assertTrue(result.ai_validation_passed)
+
+    def test_driver_queries_cover_supported_metrics(self) -> None:
+        questions_and_metrics = [
+            ("Why are sales revenue low?", "sales_revenue"),
+            ("Why is gross margin low?", "gross_margin"),
+            ("Why are discounts high?", "discount_pct"),
+            ("Why is supplier quality low?", "supplier_quality"),
+            ("What is behind late deliveries?", "delivery_performance"),
+        ]
+        for question, expected_metric in questions_and_metrics:
+            with self.subTest(metric=expected_metric):
+                with (
+                    patch("insights_agent._llm_classify", return_value=("driver_analysis", None, question)),
+                    patch("insights_agent._generate_ai_narrative", return_value="Measured driver summary."),
+                    patch("insights_agent._validate_with_ai", return_value=(True, [])),
+                ):
+                    result = analyze(question)
+                self.assertEqual(expected_metric, result.driver_metric)
+                self.assertFalse(result.frame.empty)
+                self.assertIn("metric_value", result.frame.columns)
 
     def test_unsupported_or_unrankable_requests_are_not_misclassified(self) -> None:
         with self.assertRaisesRegex(ValueError, "couldn't confidently match"):

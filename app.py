@@ -193,7 +193,7 @@ question = st.text_input(
     label_visibility="collapsed",
     key="question_input",
     placeholder="e.g. ‘sales 2025 month trend’ or ‘which place sold most last year?’",
-    help="You can use shorthand, casual wording, or imperfect grammar. Ask about sales, products, regions, customer segments, procurement, suppliers, delivery, or annual comparisons.",
+    help="Use shorthand or casual wording, compare supported years by group, or ask why sales, spend, margin, discounts, quality, or delivery metrics may be high or low.",
 )
 st.caption(
     "AI note: this demo uses a general-purpose model rather than a custom-trained chatbot. "
@@ -246,30 +246,44 @@ if run:
             earlier = comparison_rows.loc[earlier_year]
             later = comparison_rows.loc[later_year]
 
-            def comparison_delta(current: float, previous: float) -> str:
-                difference = current - previous
-                percent = difference / abs(previous) * 100 if previous else 0.0
-                sign = "+" if difference >= 0 else "−"
-                return f"{sign}{format_money(abs(difference), display_unit)} · {percent:+.1f}%"
+            if later_year == 2026:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric(
+                    "Sales · 2026 YTD", format_money(later["sales_ytd"], display_unit),
+                    f"{later['sales_yoy_change']} vs matched 2025 period",
+                )
+                c2.metric(
+                    "Procurement spend · 2026 YTD", format_money(later["spend_ytd"], display_unit),
+                    f"{later['spend_yoy_change']} vs matched 2025 period",
+                )
+                c3.metric("Sales change", later["sales_yoy_change"])
+                c4.metric("Spend change", later["spend_yoy_change"])
+            else:
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric(
-                f"Sales · {later_year}", format_money(later["sales_revenue"], display_unit),
-                comparison_delta(later["sales_revenue"], earlier["sales_revenue"]),
-            )
-            c2.metric(
-                f"Procurement spend · {later_year}", format_money(later["procurement_spend"], display_unit),
-                comparison_delta(later["procurement_spend"], earlier["procurement_spend"]),
-            )
-            c3.metric(
-                f"Gross margin · {later_year}", format_money(later["gross_margin"], display_unit),
-                comparison_delta(later["gross_margin"], earlier["gross_margin"]),
-            )
-            ratio_delta = later["procurement_to_sales_pct"] - earlier["procurement_to_sales_pct"]
-            c4.metric(
-                f"Procurement / sales · {later_year}", f"{later['procurement_to_sales_pct']:.1f}%",
-                f"{ratio_delta:+.1f} percentage points",
-            )
+                def comparison_delta(current: float, previous: float) -> str:
+                    difference = current - previous
+                    percent = difference / abs(previous) * 100 if previous else 0.0
+                    sign = "+" if difference >= 0 else "−"
+                    return f"{sign}{format_money(abs(difference), display_unit)} · {percent:+.1f}%"
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric(
+                    f"Sales · {later_year}", format_money(later["sales_revenue"], display_unit),
+                    comparison_delta(later["sales_revenue"], earlier["sales_revenue"]),
+                )
+                c2.metric(
+                    f"Procurement spend · {later_year}", format_money(later["procurement_spend"], display_unit),
+                    comparison_delta(later["procurement_spend"], earlier["procurement_spend"]),
+                )
+                c3.metric(
+                    f"Gross margin · {later_year}", format_money(later["gross_margin"], display_unit),
+                    comparison_delta(later["gross_margin"], earlier["gross_margin"]),
+                )
+                ratio_delta = later["procurement_to_sales_pct"] - earlier["procurement_to_sales_pct"]
+                c4.metric(
+                    f"Procurement / sales · {later_year}", f"{later['procurement_to_sales_pct']:.1f}%",
+                    f"{ratio_delta:+.1f} percentage points",
+                )
         else:
             st.caption(
                 "Sales here means net sales after discounts. Procurement spend is purchase-order spend; "
@@ -346,7 +360,57 @@ if run:
             chart.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color=CHART_TEXT_COLOR, size=12))
             chart_specs.append((title, chart, True))
 
-        if result.intent == "annual_comparison":
+        if result.intent == "driver_analysis":
+            driver_chart_frame = result.frame.copy()
+            driver_chart_frame.insert(
+                0,
+                "driver_label",
+                driver_chart_frame["driver_type"] + " · " + driver_chart_frame["driver"],
+            )
+            monetary_metric = result.driver_metric in {"procurement_spend", "sales_revenue", "gross_margin"}
+            if result.driver_metric == "supplier_quality":
+                axis_label, suffix_label = "Average quality rating (out of 5)", ""
+            elif result.driver_metric == "delivery_performance":
+                axis_label, suffix_label = "Late deliveries", "%"
+            elif result.driver_metric == "discount_pct":
+                axis_label, suffix_label = "Average discount", "%"
+            else:
+                axis_label, suffix_label = unit_axis_label, ""
+            add_horizontal_metric_chart(
+                driver_chart_frame,
+                "metric_value",
+                result.title,
+                axis_label,
+                monetary=monetary_metric,
+                suffix_label=suffix_label,
+            )
+        elif result.intent == "grouped_year_comparison":
+            chart_data = result.frame.copy()
+            chart_data["fiscal_year"] = chart_data["fiscal_year"].astype(str)
+            chart_data = chart_data.sort_values("metric_value", ascending=True)
+            monetary_metric = result.comparison_metric in {"sales_revenue", "gross_margin", "procurement_spend"}
+            chart_labels = (
+                chart_data["metric_value"].map(lambda value: format_money(value, display_unit))
+                if monetary_metric
+                else chart_data["metric_value"].map(lambda value: f"{value:.1f}%")
+            )
+            chart = px.bar(
+                chart_data,
+                x="metric_value",
+                y="group_name",
+                color="fiscal_year",
+                orientation="h",
+                barmode="group",
+                text=chart_labels,
+                title=result.title,
+                labels={"metric_value": "USD (M)" if monetary_metric else "Rate (%)", "group_name": result.comparison_group.title()},
+                color_discrete_sequence=CHART_COLORS[:2],
+                template=CHART_TEMPLATE,
+                hover_data=["contribution_pct"] if "contribution_pct" in chart_data else None,
+            )
+            chart.update_traces(textposition="outside", cliponaxis=False, textfont=dict(size=11))
+            chart_specs.append((result.title, chart, True))
+        elif result.intent == "annual_comparison":
             chart_data = result.frame.melt(
                 id_vars="fiscal_year",
                 value_vars=["sales_revenue", "procurement_spend"],
@@ -421,6 +485,8 @@ if run:
         st.subheader("The visual")
         chart_explanations = {
             "annual_comparison": "Paired bars show Sales and Procurement spend side by side. Bar labels are USD millions; 2026 is year-to-date.",
+            "grouped_year_comparison": "Bars compare the requested group across the selected years.",
+            "driver_analysis": "These are measured contributors or patterns in the sample data, not proof of a single cause.",
             "sales_trend": "The line shows the month-to-month pattern. The latest month is labeled; hover over points for exact values.",
             "supplier_performance": "Separate scorecards keep spend, delivery reliability, and quality on their own scales for a fair comparison.",
             "delivery_performance": "Each supplier is compared on on-time delivery and average lead time; lower lead time is better.",
@@ -429,6 +495,21 @@ if run:
             chart_explanations["annual_comparison"] = (
                 f"Paired bars compare Sales and Procurement spend for {result.comparison_years[0]} "
                 f"and {result.comparison_years[1]} only. Labels are USD millions."
+            )
+        if result.intent == "grouped_year_comparison" and result.comparison_years:
+            matched_period_note = (
+                " 2026 uses year-to-date records through 2026-10-05, matched to the same calendar period in the other selected year."
+                if 2026 in result.comparison_years
+                else ""
+            )
+            chart_explanations["grouped_year_comparison"] = (
+                f"Each pair compares the same {result.comparison_group} across {result.comparison_years[0]} and "
+                f"{result.comparison_years[1]}. Differences describe the data, not proven causes.{matched_period_note}"
+            )
+        if result.intent == "driver_analysis":
+            chart_explanations["driver_analysis"] = (
+                "The breakdown highlights groups with the largest measured contribution or rate. "
+                "These associations can suggest where to investigate, but do not establish causation."
             )
         st.markdown(
             f'<div class="section-note">{chart_explanations.get(result.intent, "Bars are ranked from strongest to weakest; each bar is labeled with its value.")}</div>',
@@ -479,6 +560,54 @@ if run:
                 "sales_yoy_change": "Sales change vs prior year",
                 "spend_yoy_change": "Spend change vs prior year",
                 "procurement_to_sales_pct": "Procurement as % of sales",
+            })
+            st.dataframe(display_frame, width="stretch", hide_index=True)
+        elif result.intent == "driver_analysis":
+            st.subheader("Evidence behind the explanation")
+            display_frame = result.frame.copy().rename(columns={
+                "driver_type": "Breakdown",
+                "driver": "Group",
+                "metric_value": "Observed metric",
+                "contribution_pct": "Share of total",
+                "observations": "Records",
+                "related_spend": "Procurement spend",
+                "avg_late_days": "Average late days",
+                "avg_lead_time_days": "Average lead time (days)",
+            })
+            if result.driver_metric in {"procurement_spend", "sales_revenue", "gross_margin"}:
+                display_frame["Observed metric"] = display_frame["Observed metric"].map(
+                    lambda value: format_money(value, display_unit)
+                )
+            elif result.driver_metric in {"discount_pct", "delivery_performance"}:
+                display_frame["Observed metric"] = display_frame["Observed metric"].map(lambda value: f"{value:.1f}%")
+            if "Share of total" in display_frame:
+                display_frame["Share of total"] = display_frame["Share of total"].map(
+                    lambda value: f"{value:.1f}%" if pd.notna(value) else "—"
+                )
+            if "Procurement spend" in display_frame:
+                display_frame["Procurement spend"] = display_frame["Procurement spend"].map(
+                    lambda value: format_money(value, display_unit)
+                )
+            st.dataframe(display_frame, width="stretch", hide_index=True)
+        elif result.intent == "grouped_year_comparison":
+            st.subheader("Group-by-group comparison")
+            display_frame = result.frame.copy()
+            monetary_metric = result.comparison_metric in {"sales_revenue", "gross_margin", "procurement_spend"}
+            display_frame["metric_value"] = display_frame["metric_value"].map(
+                lambda value: format_money(value, display_unit) if monetary_metric else f"{value:.1f}%"
+            )
+            if "contribution_pct" in display_frame:
+                display_frame["contribution_pct"] = display_frame["contribution_pct"].map(
+                    lambda value: f"{value:.1f}%" if pd.notna(value) else "—"
+                )
+            display_frame = display_frame.rename(columns={
+                "fiscal_year": "Year",
+                "group_name": result.comparison_group.title(),
+                "metric_value": result.comparison_metric.replace("_", " ").title(),
+                "observations": "Records",
+                "contribution_pct": "Share of year total",
+                "avg_late_days": "Average late days",
+                "avg_lead_time_days": "Average lead time (days)",
             })
             st.dataframe(display_frame, width="stretch", hide_index=True)
 

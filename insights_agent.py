@@ -25,6 +25,7 @@ load_dotenv(ROOT / ".env")
 INTENTS = {
     "sales_summary", "sales_trend", "top_products", "regional_sales", "segment_sales",
     "procurement_spend", "supplier_performance", "delivery_performance", "annual_comparison",
+    "driver_analysis", "grouped_year_comparison",
 }
 INTENT_ALIASES = {
     "sales_overview": "sales_summary",
@@ -62,6 +63,8 @@ SUPPORTED_INTENT_GUIDANCE = {
     "supplier_performance": "supplier spend, quality, or a broader supplier scorecard",
     "delivery_performance": "supplier delivery, on-time/late rates, or lead time",
     "annual_comparison": "year-by-year comparison of sales and procurement spend together",
+    "driver_analysis": "evidence-based contributors or patterns behind a supported sales, procurement spend, gross margin, discount, supplier quality, or delivery metric when the user asks why or what may be driving it",
+    "grouped_year_comparison": "comparison of sales, gross margin, procurement spend, or delivery across two named years, grouped by the requested product, customer segment, region, procurement category, supplier, or month",
 }
 DISPLAY_UNITS = {
     "Millions (M)": (1_000_000, "M"),
@@ -97,6 +100,9 @@ class Analysis:
     ai_validation_issues: list[str]
     ai_correction_attempts: int = 0
     comparison_years: tuple[int, int] | None = None
+    driver_metric: str | None = None
+    comparison_group: str | None = None
+    comparison_metric: str | None = None
 
 
 def has_groq_api_key() -> bool:
@@ -175,6 +181,10 @@ def _llm_classify(question: str) -> tuple[str, int | None, str]:
                     f"intent must be a canonical value from {', '.join(sorted(INTENTS))}, or 'unsupported' when the request "
                     "is outside the available analyses, materially ambiguous, or asks for a metric this demo cannot rank. "
                     f"Analysis guide: {intent_guide}. "
+                    "When a user asks why a supported metric is high/low, what is driving it, or what may explain a change, choose driver_analysis. "
+                    "Driver analysis computes group-level contributions and observed associations from the available records; it does not establish causal mechanisms. "
+                    "The requested metric must be identifiable as sales/revenue, procurement spend, gross margin, discount, supplier quality, or delivery performance. "
+                    "If the question asks for an unsupported or unmeasured cause, use unsupported rather than inventing a cause. "
                     "Use sales/revenue for sales, turnover, or takings; supplier/vendor for vendors; procurement/purchasing "
                     "for buying and purchase orders; on-time/late/lead-time for delivery. Do not equate revenue with profit. "
                     "Top products are ranked by net revenue, not units; if the user specifically asks for a quantity-ranked "
@@ -184,6 +194,9 @@ def _llm_classify(question: str) -> tuple[str, int | None, str]:
                     "For a request comparing sales and procurement between two named years, use annual_comparison; "
                     "the app will show only those requested years, their side-by-side measures, and year-over-year changes. "
                     "For example, '2024 vs 2025 sales and procurement breakdown' is annual_comparison, year=null. "
+                    "When two explicit years and a grouping such as segment, region, product, supplier, item category, or month are requested, choose grouped_year_comparison. "
+                    "Choose the relevant measure (sales/revenue, gross margin, procurement spend, or delivery) from the user's words. "
+                    "Example: '2023 vs 2025 sales by segment' => grouped_year_comparison, year=null, preserving both years and the segment grouping. "
                     "Preserve every explicit year. Resolve relative years as of 2026-10-05: this year=2026 and last year=2025; "
                     "use year=null when no year is requested. Only 2023, 2024, 2025, and 2026 are available; unsupported years "
                     "must produce intent='unsupported'. Never infer a product, region, segment, metric, or date that the user "
@@ -193,6 +206,7 @@ def _llm_classify(question: str) -> tuple[str, int | None, str]:
                     "'rev by region last yr pls' => {\"interpreted_question\":\"Which regions had the highest sales in 2025?\",\"intent\":\"regional_sales\",\"year\":2025}; "
                     "'vendor late deliveries 2024' => {\"interpreted_question\":\"Which suppliers had the best on-time delivery performance in 2024?\",\"intent\":\"delivery_performance\",\"year\":2024}; "
                     "'spend n quality supplier scorecard' => {\"interpreted_question\":\"Compare suppliers by procurement spend and quality rating.\",\"intent\":\"supplier_performance\",\"year\":null}; "
+                    "'why is procurement spend high?' => {\"interpreted_question\":\"Which suppliers and item categories contribute most to procurement spend?\",\"intent\":\"driver_analysis\",\"year\":null}; "
                     "'how much did we make in profit?' => {\"interpreted_question\":\"How much profit did the company make?\",\"intent\":\"unsupported\",\"year\":null}."
                 )},
                 {"role": "user", "content": question},
@@ -202,9 +216,16 @@ def _llm_classify(question: str) -> tuple[str, int | None, str]:
         payload = json.loads(response.choices[0].message.content or "{}")
         if not isinstance(payload, dict):
             raise ValueError("Groq returned an invalid classification. Please rephrase your question and try again.")
+        compared_years = _comparison_years(question)
+        requested_comparison = _grouped_comparison_spec(question, question)
+        if compared_years and requested_comparison:
+            payload = {**payload, "intent": "grouped_year_comparison", "year": None}
         intent, year, interpreted_question = _normalize_classification(payload, question)
         compared_years = _comparison_years(question)
-        if compared_years and intent in {"sales_summary", "procurement_spend"}:
+        requested_comparison = _grouped_comparison_spec(question, interpreted_question)
+        if compared_years and requested_comparison:
+            intent = "grouped_year_comparison"
+        elif compared_years and intent in {"sales_summary", "procurement_spend"}:
             intent = "annual_comparison"
         if (
             compared_years
@@ -229,13 +250,226 @@ def _comparison_years(question: str) -> tuple[int, int] | None:
     years = [int(value) for value in re.findall(r"\b20(?:23|24|25|26)\b", question)]
     unique_years = list(dict.fromkeys(years))
     comparison_cue = re.search(
-        r"\b(compare|comparison|versus|vs\.?|against|between|difference|change)\b",
+        r"\b(compare|compared|comparison|versus|vs\.?|against|between|difference|change|from|to)\b",
         question,
         flags=re.IGNORECASE,
     )
     if len(unique_years) == 2 and comparison_cue:
-        return unique_years[0], unique_years[1]
+        ordered_years = sorted(unique_years)
+        return ordered_years[0], ordered_years[1]
     return None
+
+
+def _grouped_comparison_spec(question: str, interpreted_question: str) -> tuple[str, str] | None:
+    """Resolve a two-year grouped request to a whitelisted measure and dimension."""
+    text = f"{question} {interpreted_question}".casefold()
+    if re.search(r"\b(segment|customer segment)\b", text):
+        group = "segment"
+    elif re.search(r"\b(region|regional|geograph(?:y|ic))\b", text):
+        group = "region"
+    elif re.search(r"\b(product|products)\b", text):
+        group = "product"
+    elif re.search(r"\b(supplier|suppliers|vendor|vendors)\b", text):
+        group = "supplier"
+    elif re.search(r"\b(category|categories)\b", text):
+        group = "category"
+    elif re.search(r"\b(month|monthly)\b", text):
+        group = "month"
+    else:
+        return None
+
+    if re.search(r"\b(delivery|late|lateness|on[ -]?time|lead time)\b", text):
+        metric = "delivery_performance"
+    elif re.search(r"\b(gross margin|margin)\b", text):
+        metric = "gross_margin"
+    elif re.search(r"\b(procurement|purchase|purchasing|spend|vendor cost)\b", text):
+        metric = "procurement_spend"
+    elif re.search(r"\b(sales|revenue|turnover)\b", text):
+        metric = "sales_revenue"
+    else:
+        return None
+    if group in {"supplier", "category"} and metric in {"sales_revenue", "gross_margin"}:
+        return None
+    if metric == "procurement_spend" and group not in {"supplier", "category", "region", "month"}:
+        return None
+    if metric == "delivery_performance" and group not in {"supplier", "category", "region"}:
+        return None
+    if group == "month" and metric not in {"sales_revenue", "gross_margin", "procurement_spend"}:
+        return None
+    return metric, group
+
+
+def _grouped_comparison_query(
+    metric: str, group: str, years: tuple[int, int]
+) -> tuple[str, list[Any], str, str]:
+    """Build a parameterized SQL comparison for supported year/group combinations."""
+    params: list[Any] = [years[0], years[1]]
+    sales_date_clause = " AND STRFTIME(CAST(order_date AS DATE), '%m-%d') <= '10-05'" if 2026 in years else ""
+    procurement_date_clause = " AND STRFTIME(CAST(po_date AS DATE), '%m-%d') <= '10-05'" if 2026 in years else ""
+    if metric in {"sales_revenue", "gross_margin"}:
+        dimensions = {
+            "segment": ("customer_segment", "Customer segment"),
+            "region": ("customer_region", "Region"),
+            "product": ("product_name", "Product"),
+            "category": ("product_category", "Product category"),
+            "month": ("order_month", "Month"),
+        }
+        column, label = dimensions[group]
+        metric_column = "net_revenue" if metric == "sales_revenue" else "gross_margin"
+        metric_label = "Sales" if metric == "sales_revenue" else "Gross margin"
+        sql = (
+            f"WITH grouped AS (SELECT fiscal_year, {column} AS group_name, SUM({metric_column}) AS metric_value, "
+            f"COUNT(DISTINCT order_id) AS observations FROM sales WHERE fiscal_year IN (?, ?){sales_date_clause} "
+            f"GROUP BY fiscal_year, {column}) SELECT fiscal_year, group_name, metric_value, observations, "
+            "ROUND(100 * metric_value / NULLIF(SUM(metric_value) OVER (PARTITION BY fiscal_year), 0), 1) AS contribution_pct "
+            "FROM grouped ORDER BY group_name, fiscal_year"
+        )
+        return sql, params, f"{metric_label} by {label.lower()}: {years[0]} vs {years[1]}", "grouped_comparison"
+
+    if metric == "procurement_spend":
+        dimensions = {
+            "category": ("item_category", "Item category"),
+            "supplier": ("supplier_name", "Supplier"),
+            "region": ("ship_to_region", "Ship-to region"),
+            "month": ("CAST(po_date AS DATE)", "Purchase-order date"),
+        }
+        column, label = dimensions[group]
+        if group == "month":
+            group_expression = "STRFTIME(DATE_TRUNC('month', CAST(po_date AS DATE)), '%Y-%m')"
+        else:
+            group_expression = column
+        sql = (
+            f"WITH grouped AS (SELECT fiscal_year, {group_expression} AS group_name, SUM(line_total) AS metric_value, "
+            f"COUNT(DISTINCT po_id) AS observations FROM procurement WHERE fiscal_year IN (?, ?){procurement_date_clause} "
+            f"GROUP BY fiscal_year, {group_expression}) SELECT fiscal_year, group_name, metric_value, observations, "
+            "ROUND(100 * metric_value / NULLIF(SUM(metric_value) OVER (PARTITION BY fiscal_year), 0), 1) AS contribution_pct "
+            f"FROM grouped ORDER BY group_name, fiscal_year"
+        )
+        return sql, params, f"Procurement spend by {label.lower()}: {years[0]} vs {years[1]}", "grouped_comparison"
+
+    if metric == "delivery_performance":
+        dimensions = {
+            "supplier": ("supplier_name", "Supplier"),
+            "category": ("item_category", "Item category"),
+            "region": ("ship_to_region", "Ship-to region"),
+        }
+        column, label = dimensions[group]
+        sql = (
+            f"SELECT fiscal_year, {column} AS group_name, "
+            "ROUND(AVG(CASE WHEN late_days > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) AS metric_value, "
+            "ROUND(AVG(late_days), 1) AS avg_late_days, ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days, "
+            "COUNT(DISTINCT po_id) AS observations FROM procurement WHERE fiscal_year IN (?, ?) "
+            f"{procurement_date_clause} AND purchase_status IN ('Received', 'Closed') "
+            f"GROUP BY fiscal_year, {column} ORDER BY group_name, fiscal_year"
+        )
+        return sql, params, f"Late-delivery rate by {label.lower()}: {years[0]} vs {years[1]}", "grouped_comparison"
+
+    raise ValueError("This metric and grouping cannot be compared across years.")
+
+
+def _driver_metric_for(question: str, interpreted_question: str) -> str:
+    """Map a why/cause question to a measurable field in the sample data."""
+    text = f"{question} {interpreted_question}".casefold()
+    if re.search(r"\b(delivery|deliveries|late|lateness|on[ -]?time|lead time)\b", text):
+        return "delivery_performance"
+    if re.search(r"\b(quality|defect|rating)\b", text):
+        return "supplier_quality"
+    if re.search(r"\b(gross margin|margin)\b", text):
+        return "gross_margin"
+    if re.search(r"\b(discount|discounts)\b", text):
+        return "discount_pct"
+    if re.search(r"\b(procurement|purchase|purchasing|spend|supplier cost|vendor cost)\b", text):
+        return "procurement_spend"
+    if re.search(r"\b(sales|revenue|turnover|orders)\b", text):
+        return "sales_revenue"
+    raise ValueError(
+        "To investigate a driver, name a supported metric: sales/revenue, procurement spend, "
+        "gross margin, discounts, supplier quality, or delivery performance."
+    )
+
+
+def _driver_analysis_query(metric: str, year: int | None) -> tuple[str, list[Any], str, str]:
+    """Build a fixed, read-only breakdown for a supported why/cause question."""
+    where = "WHERE fiscal_year = ?" if year is not None else ""
+    params: list[Any] = [year] if year is not None else []
+    if metric == "procurement_spend":
+        sql = (
+            "WITH base AS (SELECT item_category, supplier_name, line_total, po_id "
+            f"FROM procurement {where}), total AS (SELECT SUM(line_total) AS total_spend FROM base), drivers AS ("
+            "SELECT 'Item category' AS driver_type, item_category AS driver, SUM(line_total) AS metric_value, "
+            "COUNT(DISTINCT po_id) AS observations FROM base GROUP BY item_category "
+            "UNION ALL SELECT 'Supplier', supplier_name, SUM(line_total), COUNT(DISTINCT po_id) "
+            "FROM base GROUP BY supplier_name), ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY driver_type ORDER BY metric_value DESC) AS rank FROM drivers) "
+            "SELECT driver_type, driver, metric_value, ROUND(100 * metric_value / NULLIF(total_spend, 0), 1) AS contribution_pct, observations "
+            "FROM ranked CROSS JOIN total WHERE rank <= 5 ORDER BY driver_type, metric_value DESC"
+        )
+        return sql, params, "Observed contributors to procurement spend", "driver"
+
+    if metric in {"sales_revenue", "gross_margin"}:
+        metric_column = "net_revenue" if metric == "sales_revenue" else "gross_margin"
+        metric_label = "Sales revenue" if metric == "sales_revenue" else "Gross margin"
+        sql = (
+            f"WITH base AS (SELECT product_category, customer_region, customer_segment, order_id, {metric_column} AS value "
+            f"FROM sales {where}), total AS (SELECT SUM(value) AS total_value FROM base), drivers AS ("
+            "SELECT 'Product category' AS driver_type, product_category AS driver, SUM(value) AS metric_value, "
+            "COUNT(DISTINCT order_id) AS observations FROM base GROUP BY product_category "
+            "UNION ALL SELECT 'Region', customer_region, SUM(value), COUNT(DISTINCT order_id) FROM base GROUP BY customer_region "
+            "UNION ALL SELECT 'Customer segment', customer_segment, SUM(value), COUNT(DISTINCT order_id) FROM base GROUP BY customer_segment), ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY driver_type ORDER BY metric_value DESC) AS rank FROM drivers) "
+            "SELECT driver_type, driver, metric_value, ROUND(100 * metric_value / NULLIF(total_value, 0), 1) AS contribution_pct, observations "
+            "FROM ranked CROSS JOIN total WHERE rank <= 5 ORDER BY driver_type, metric_value DESC"
+        )
+        return sql, params, f"Observed contributors to {metric_label.lower()}", "driver"
+
+    if metric == "discount_pct":
+        sql = (
+            f"WITH base AS (SELECT product_category, customer_region, customer_segment, order_id, discount_pct FROM sales {where}), drivers AS ("
+            "SELECT 'Product category' AS driver_type, product_category AS driver, AVG(discount_pct) * 100 AS metric_value, "
+            "COUNT(DISTINCT order_id) AS observations FROM base GROUP BY product_category "
+            "UNION ALL SELECT 'Region', customer_region, AVG(discount_pct) * 100, COUNT(DISTINCT order_id) FROM base GROUP BY customer_region "
+            "UNION ALL SELECT 'Customer segment', customer_segment, AVG(discount_pct) * 100, COUNT(DISTINCT order_id) FROM base GROUP BY customer_segment), ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY driver_type ORDER BY metric_value DESC) AS rank FROM drivers) "
+            "SELECT driver_type, driver, ROUND(metric_value, 1) AS metric_value, observations FROM ranked WHERE rank <= 5 "
+            "ORDER BY driver_type, metric_value DESC"
+        )
+        return sql, params, "Observed patterns in average discounts", "driver"
+
+    if metric == "supplier_quality":
+        sql = (
+            "WITH base AS (SELECT supplier_name, item_category, quality_rating, line_total, po_id "
+            f"FROM procurement {where}), drivers AS ("
+            "SELECT 'Supplier' AS driver_type, supplier_name AS driver, AVG(quality_rating) AS metric_value, "
+            "SUM(line_total) AS related_spend, COUNT(DISTINCT po_id) AS observations FROM base GROUP BY supplier_name "
+            "UNION ALL SELECT 'Item category', item_category, AVG(quality_rating), SUM(line_total), COUNT(DISTINCT po_id) "
+            "FROM base GROUP BY item_category), ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY driver_type ORDER BY metric_value ASC) AS rank FROM drivers) "
+            "SELECT driver_type, driver, ROUND(metric_value, 2) AS metric_value, related_spend, observations "
+            "FROM ranked WHERE rank <= 5 ORDER BY driver_type, metric_value ASC"
+        )
+        return sql, params, "Observed supplier-quality patterns", "driver"
+
+    if metric == "delivery_performance":
+        delivery_filter = "WHERE purchase_status IN ('Received', 'Closed')"
+        if year is not None:
+            delivery_filter = "WHERE fiscal_year = ? AND purchase_status IN ('Received', 'Closed')"
+        sql = (
+            "WITH base AS (SELECT supplier_name, item_category, ship_to_region, po_id, late_days, lead_time_days "
+            f"FROM procurement {delivery_filter}), drivers AS ("
+            "SELECT 'Supplier' AS driver_type, supplier_name AS driver, AVG(CASE WHEN late_days > 0 THEN 1.0 ELSE 0.0 END) * 100 AS metric_value, "
+            "AVG(late_days) AS avg_late_days, AVG(lead_time_days) AS avg_lead_time_days, COUNT(DISTINCT po_id) AS observations FROM base GROUP BY supplier_name "
+            "UNION ALL SELECT 'Item category', item_category, AVG(CASE WHEN late_days > 0 THEN 1.0 ELSE 0.0 END) * 100, "
+            "AVG(late_days), AVG(lead_time_days), COUNT(DISTINCT po_id) FROM base GROUP BY item_category "
+            "UNION ALL SELECT 'Ship-to region', ship_to_region, AVG(CASE WHEN late_days > 0 THEN 1.0 ELSE 0.0 END) * 100, "
+            "AVG(late_days), AVG(lead_time_days), COUNT(DISTINCT po_id) FROM base GROUP BY ship_to_region), ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY driver_type ORDER BY metric_value DESC) AS rank FROM drivers) "
+            "SELECT driver_type, driver, ROUND(metric_value, 1) AS metric_value, ROUND(avg_late_days, 1) AS avg_late_days, "
+            "ROUND(avg_lead_time_days, 1) AS avg_lead_time_days, observations FROM ranked WHERE rank <= 5 "
+            "ORDER BY driver_type, metric_value DESC"
+        )
+        return sql, params, "Observed patterns associated with late deliveries", "driver"
+
+    raise ValueError("This metric is not available for driver analysis.")
 
 
 def _generate_ai_narrative(
@@ -250,10 +484,20 @@ def _generate_ai_narrative(
     result_json = frame.head(12).to_json(orient="records")
     selected_years = sorted(frame["fiscal_year"].dropna().astype(int).unique()) if "fiscal_year" in frame else []
     year_scope_instruction = (
+        f"The selected {year} figures are year-to-date through {DATA_CUTOFF}; explicitly say so. "
+        if year == 2026
+        else
         f"The requested comparison is limited to complete fiscal years {selected_years}; "
         "use the full-year measures and omit year-to-date caveats."
         if len(selected_years) == 2 and 2026 not in selected_years
         else f"The 2026 data is year-to-date only through {DATA_CUTOFF}; explicitly note this if 2026 appears in the comparison."
+    )
+    analysis_guidance = (
+        "For driver_analysis, name the largest measured contributors and their shares/rates where present. These are descriptive associations, not proven causes; explicitly say when this dataset cannot establish root cause. "
+        if intent == "driver_analysis"
+        else "For grouped_year_comparison, compare the same group across the two years using metric_value and contribution_pct; do not compare different group labels as if they were the same entity. "
+        if intent == "grouped_year_comparison"
+        else ""
     )
     messages = [
         {
@@ -267,6 +511,7 @@ def _generate_ai_narrative(
                 "When the supplied result contains exactly two requested fiscal years, compare only those years, include the absolute amounts and percent changes, "
                 "and do not describe other years or claim that the displayed pair is a complete multi-year trend. "
                 "state clearly that spend versus sales is not profit or a margin. "
+                f"{analysis_guidance}"
                 f"Format monetary values in USD as {display_unit}: use {format_money(5_463_403.71, display_unit)} for a value of $5,463,403.71. "
                 "Do not convert currencies. Leave counts and percentages as counts and percentages. If the result is empty, say so plainly. "
                 "Format important findings in Markdown."
@@ -318,6 +563,8 @@ def _correct_ai_narrative(
                 "Read the actual metric values, sort numerically before stating rankings, and remove every unsupported claim. "
                 "For supplier delivery questions, rank by on_time_pct, not by procurement spend or input row order. "
                 f"Use compact USD {display_unit} formatting and preserve the 2026 year-to-date caveat through {DATA_CUTOFF}. "
+                "For driver analysis, report observed contributors/associations only; never state that a group caused the result unless the data directly proves it. "
+                "For a grouped year comparison, compare the same group across years and preserve the requested measure and group. "
                 "Return only the corrected insight in 2-4 concise sentences."
             ),
         },
@@ -361,7 +608,19 @@ def _validate_with_ai(
 ) -> tuple[bool, list[str]]:
     """Ask Groq to independently validate the narrative against computed results."""
     selected_years = sorted(frame["fiscal_year"].dropna().astype(int).unique()) if "fiscal_year" in frame else []
-    if len(selected_years) == 2 and 2026 not in selected_years:
+    if intent == "grouped_year_comparison" and len(selected_years) == 2:
+        year_validation_instruction = (
+            f"The result compares grouped metric observations for {selected_years}. Validate each comparison only against "
+            "the supplied rows for the same driver/group; percentage shares are within their own year. Do not infer causes. "
+            + (f"Since 2026 is partial through {DATA_CUTOFF}, require a year-to-date note and compare it only to matched-period data. " if 2026 in selected_years else "")
+        )
+    elif intent == "driver_analysis":
+        year_validation_instruction = (
+            "Driver-analysis rows show observed group contributions, averages, or delivery rates. Treat these as associations, "
+            "not proof of causation; flag any unsupported causal claim or claim not backed by a supplied metric. "
+            + (f"The selected 2026 data is year-to-date through {DATA_CUTOFF}; require that caveat. " if year == 2026 else "")
+        )
+    elif len(selected_years) == 2 and 2026 not in selected_years and "sales_revenue" in frame and "procurement_spend" in frame:
         year_validation_instruction = (
             f"The result compares complete fiscal years {selected_years}. Validate year-over-year changes against "
             "the full-year sales_revenue and procurement_spend values. Do not treat non-null sales_ytd/spend_ytd "
@@ -386,6 +645,7 @@ def _validate_with_ai(
                 f"for example, {format_money(5_463_403.71, display_unit)} equals 5,463,403.71 USD. Do not flag a correctly abbreviated amount. "
                 "Return only compact JSON with keys passed (boolean) and issues (array of at most 3 short strings). "
                 "Set passed=false if a claim is unsupported, materially misleading, or inconsistent with the result. "
+                "For driver_analysis, require language that describes measured contributors/associations rather than asserting they caused the outcome. "
                 "An empty result is valid only if the answer clearly says no data was found."
             ),
         },
@@ -522,14 +782,33 @@ def analyze(question: str, display_unit: str = DEFAULT_DISPLAY_UNIT) -> Analysis
         raise ValueError(f"Unsupported monetary display unit: {display_unit}")
     intent, year, interpreted_question = classify_question(question)
     comparison_years = _comparison_years(question)
-    if comparison_years and intent not in {"annual_comparison", "sales_summary", "procurement_spend"}:
+    comparison_spec = _grouped_comparison_spec(question, interpreted_question)
+    driver_metric: str | None = None
+    comparison_metric: str | None = None
+    comparison_group: str | None = None
+    if comparison_years and comparison_spec:
+        comparison_metric, comparison_group = comparison_spec
+        intent = "grouped_year_comparison"
+    elif comparison_years and intent == "grouped_year_comparison":
         raise ValueError(
-            "This version compares two years for overall sales and procurement totals. "
-            "Choose an overall comparison, or ask for one year at a time for a grouped breakdown."
+            "For a grouped year comparison, name both a measure (sales, procurement spend, gross margin, or delivery) "
+            "and a group (segment, region, product, category, supplier, or month)."
+        )
+    elif comparison_years and intent not in {"annual_comparison", "sales_summary", "procurement_spend"}:
+        raise ValueError(
+            "This two-year comparison needs an overall sales/procurement question or a supported grouping "
+            "such as sales by segment, region, or product."
         )
     if comparison_years and intent in {"sales_summary", "procurement_spend"}:
         intent = "annual_comparison"
-    if intent != "annual_comparison":
+    if intent == "driver_analysis":
+        driver_metric = _driver_metric_for(question, interpreted_question)
+        sql, params, title, chart = _driver_analysis_query(driver_metric, year)
+    elif intent == "grouped_year_comparison" and comparison_years and comparison_metric and comparison_group:
+        sql, params, title, chart = _grouped_comparison_query(
+            comparison_metric, comparison_group, comparison_years
+        )
+    elif intent != "annual_comparison":
         sql, params, title, chart = _query_for(intent, year)
     else:
         sql, params, title, chart = _query_for(intent, None)
@@ -584,4 +863,7 @@ def analyze(question: str, display_unit: str = DEFAULT_DISPLAY_UNIT) -> Analysis
         ai_validation_issues=ai_validation_issues,
         ai_correction_attempts=correction_attempts,
         comparison_years=comparison_years,
+        driver_metric=driver_metric,
+        comparison_group=comparison_group,
+        comparison_metric=comparison_metric,
     )

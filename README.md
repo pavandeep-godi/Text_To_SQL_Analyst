@@ -12,6 +12,8 @@ A small, beginner-friendly proof of concept that turns business questions into a
 - Procurement spend by item category
 - Supplier spend, quality, and delivery performance
 - Annual sales-versus-procurement comparisons
+- Two-year breakdowns by sales segment, region, product, procurement category, supplier, or delivery measure
+- Evidence-based driver breakdowns for sales, procurement spend, gross margin, discounts, supplier quality, and delivery
 - Questions about 2023, 2024, 2025, or 2026
 
 Example questions:
@@ -24,6 +26,8 @@ Example questions:
 - “Compare sales by customer segment”
 - “Compare suppliers by procurement spend and quality rating”
 - “Compare 2024 vs 2025 sales and procurement breakdown”
+- “2023 vs 2025 sales by segment”
+- “Why is procurement spend high?”
 
 ## Get started
 
@@ -47,7 +51,11 @@ The layout adapts to narrow mobile screens, laptop windows, and wide or extended
 
 For annual comparisons, **Sales** means net sales after discounts and **Procurement spend** means purchase-order totals. The analysis also shows gross sales, gross margin, procurement as a percentage of sales, and year-over-year movement. Full years are compared with full years; 2026 year-to-date growth is compared with the same dates in 2025. Procurement-to-sales is not a profit or margin measure.
 
-When a question explicitly compares two supported years, such as 2024 and 2025, the annual comparison view limits its chart and breakdown to those years and shows the later year's sales, procurement spend, gross margin, and procurement-to-sales ratio with changes against the earlier year. The two-year comparison currently covers overall totals; ask about one year at a time for a regional, product, segment, supplier, or category breakdown.
+When a question explicitly compares two supported years, such as 2024 and 2025, the comparison view limits its chart and breakdown to those years. Overall comparisons show the later year's sales, procurement spend, gross margin, and procurement-to-sales ratio with changes against the earlier year.
+
+Two-year comparisons can also preserve a named group, for example **sales by segment in 2023 vs 2025** or **procurement spend by supplier in 2024 vs 2025**. The chart and table compare the same groups across both years and report each group's share of that year's total when applicable.
+
+For **why** questions, the app computes observed contributors or group patterns from available fields—for example, procurement spend by item category and supplier, or late-delivery rates by supplier and item category. These are evidence-backed associations that can guide investigation, not proof of cause. The generated data does not record every real-world cause, so the app will not claim that a group caused an outcome when the data cannot establish it.
 
 The demo's datasets are already included in `data/`. Run the generator again whenever you want to replace them with the same reproducible sample data.
 
